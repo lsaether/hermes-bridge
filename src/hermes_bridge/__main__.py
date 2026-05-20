@@ -42,12 +42,40 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+LOG_DATEFMT = "%H:%M:%S"
+
+
+def _uvicorn_log_config(level: str) -> dict:
+    """Mirror our basicConfig format onto uvicorn's loggers so startup output
+    isn't a Frankenstein of two different formatters."""
+    return {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "default": {"format": LOG_FORMAT, "datefmt": LOG_DATEFMT},
+        },
+        "handlers": {
+            "default": {
+                "formatter": "default",
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stderr",
+            },
+        },
+        "loggers": {
+            "uvicorn": {"handlers": ["default"], "level": level.upper(), "propagate": False},
+            "uvicorn.error": {"handlers": ["default"], "level": level.upper(), "propagate": False},
+            "uvicorn.access": {"handlers": ["default"], "level": level.upper(), "propagate": False},
+        },
+    }
+
+
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
     logging.basicConfig(
         level=args.log_level.upper(),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
+        format=LOG_FORMAT,
+        datefmt=LOG_DATEFMT,
         stream=sys.stderr,
     )
 
@@ -77,6 +105,7 @@ def main(argv: list[str] | None = None) -> None:
         port=args.port,
         log_level=args.log_level,
         access_log=False,
+        log_config=_uvicorn_log_config(args.log_level),
     )
 
 
