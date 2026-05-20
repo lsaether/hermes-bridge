@@ -73,6 +73,15 @@ class SessionState:
     # the driving subscriber has disconnected.
     driving_subscriber: Any | None = None
 
+    # Turn serialization (chunk 5). When a session/prompt is forwarded, the
+    # bridge_id is recorded here; further session/prompt requests are rejected
+    # with -32001 until the response arrives (or the subprocess restarts).
+    # Cleared in handle_inbound when the matching response comes back. Not
+    # cleared on subscriber detach — the subprocess is still processing the
+    # turn, and clearing here would let another subscriber start a second
+    # concurrent turn that hermes-acp can't handle.
+    active_turn_bridge_id: int | None = None
+
     async def handle_outbound(self, subscriber: Any, raw: str) -> None:
         """A subscriber sent `raw` to the subprocess. Translate, intercept, or pass through."""
         try:
@@ -115,6 +124,32 @@ class SessionState:
                 await _send_one(subscriber, json.dumps(response))
                 return
 
+            # Turn serialization: reject session/prompt while another turn is active.
+            if method == "session/prompt" and self.active_turn_bridge_id is not None:
+                logger.info(
+                    "session %s: rejecting session/prompt (turn in progress, bridge_id=%s)",
+                    self.session_id, self.active_turn_bridge_id,
+                )
+                error_response = {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "error": {
+                        "code": -32001,
+                        "message": "session busy: another turn is in progress",
+                    },
+                }
+                await _send_one(subscriber, json.dumps(error_response))
+                busy_notif = json.dumps({
+                    "jsonrpc": "2.0",
+                    "method": "bridge/session_busy",
+                    "params": {
+                        "rejected_method": method,
+                        "rejected_client_id": msg_id,
+                    },
+                })
+                await _broadcast(self, busy_notif)
+                return
+
             # Allocate a bridge id and forward.
             bridge_id = self.next_bridge_id
             self.next_bridge_id += 1
@@ -124,6 +159,8 @@ class SessionState:
             else:
                 # Substantive (non-initialize) request — this subscriber is now driving.
                 self.driving_subscriber = subscriber
+            if method == "session/prompt":
+                self.active_turn_bridge_id = bridge_id
 
             parsed["id"] = bridge_id
             await self.proc.send_line(json.dumps(parsed).encode("utf-8"))
@@ -190,6 +227,13 @@ class SessionState:
                     self.session_id,
                 )
             self.pending_initialize_bridge_id = None  # initialize handshake done either way
+
+            # If this response completes the active turn, clear the busy state.
+            if msg_id == self.active_turn_bridge_id:
+                self.active_turn_bridge_id = None
+                logger.debug(
+                    "session %s: active turn (bridge_id=%s) complete", self.session_id, msg_id,
+                )
 
             parsed["id"] = original_id
             await _send_one(subscriber, json.dumps(parsed))
