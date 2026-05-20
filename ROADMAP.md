@@ -90,7 +90,7 @@ Not committed. Captured here so we don't lose ideas and so v0.5 stays focused.
 
 ### Companion projects (parallel tracks, not blockers)
 
-- **Phone client cutover.** Port `~/Code/prototypes/hermes-session-viewer` to consume `ws://bridge/acp?session=<id>` instead of DB-polling + subprocess-runner. Most of the existing PWA frontend (composer, voice, attach gate) is reusable; the data layer changes completely.
+- **Phone client cutover.** Port the existing PWA viewer prototype to consume `ws://bridge/acp?session=<id>` instead of DB-polling + subprocess-runner. The frontend (composer, voice, attach gate) is largely reusable; the data layer changes completely.
 - **Desktop ACP TUI client.** Small Textual or Rust/ratatui client that speaks ACP over WebSocket. Connects to the bridge, renders messages/tool events/deltas, sends prompts. ~300–600 lines. Removes the need to use Zed for desktop access.
 
 ### Explicitly out of scope

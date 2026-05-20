@@ -1,5 +1,7 @@
 # hermes-bridge
 
+> A tiny adapter that lets your phone (or any web client) attach to a local Hermes agent the same way Zed does — over [ACP](https://agentclientprotocol.com), just transported over WebSocket instead of stdio.
+
 WebSocket bridge to a [hermes-agent](https://github.com/NousResearch/hermes-agent) ACP stdio server. Connects mobile/web clients to a local Hermes agent without forking Hermes or scraping its session DB.
 
 ## Architecture
