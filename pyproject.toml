@@ -23,6 +23,10 @@ dev = [
     "websockets>=12",
 ]
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
 [project.scripts]
 hermes-bridge = "hermes_bridge.__main__:main"
 

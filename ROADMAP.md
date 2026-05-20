@@ -14,7 +14,9 @@ Status legend: `[ ]` not started · `[~]` in progress · `[x]` done
 
 ---
 
-## v0.5 — session multiplexing
+## v0.5 — session multiplexing ✅
+
+**Status:** done. All 7 chunks landed; pytest suite covers the DoD of each.
 
 **Goal:** N clients can subscribe to the same live Hermes session. Phone + desktop client both watch the same turn stream in real time, either can drive.
 
@@ -22,31 +24,31 @@ Status legend: `[ ]` not started · `[~]` in progress · `[x]` done
 
 **Sizing estimate:** 3–5 focused days, broken into 7 chunks. Each chunk is a self-contained commit/PR.
 
-### Chunk 1 — session routing (½ day)
+### Chunk 1 — session routing (½ day) ✅
 
 WS endpoint accepts `?session=<id>` query param. Introduce a `SessionRegistry` that maps session IDs to `SessionState` objects holding the subprocess. Each new session ID spawns its own `hermes-acp`. Still one subscriber per session for now — second connection to a live session is rejected.
 
 **DoD:** Two WS connections to `?session=foo` — first succeeds, second is rejected with a clear close code. Each unique `session` value spawns its own subprocess.
 
-### Chunk 2 — notification fan-out (½–1 day)
+### Chunk 2 — notification fan-out (½–1 day) ✅
 
 `SessionState` grows a subscriber set. Multiple WS connections to the same session ID are now allowed. **Notifications** (JSON-RPC frames with no `id` field — token deltas, tool progress, status updates) broadcast to every subscriber. Request/response still passes through to the first subscriber as a placeholder.
 
 **DoD:** Two clients on the same session — one sends a prompt, *both* see the streaming token deltas in real time. This is the moment the "watch on both screens" UX works.
 
-### Chunk 3 — request ID translation (1–2 days)
+### Chunk 3 — request ID translation (1–2 days) ✅
 
 Per-subscriber ID translation table. Outgoing requests get their `id` rewritten to a session-unique bridge ID; incoming responses get rewritten back and routed to the originating subscriber. Bridge intercepts `initialize` from subsequent clients and replays a cached response (hermes-acp only accepts one initialize per session).
 
 **DoD:** Two clients each call `initialize` successfully. Client A calls a request method and gets the response; client B doesn't see A's response. Client A sees the streaming notifications from its own turn.
 
-### Chunk 4 — agent-initiated request routing (½–1 day)
+### Chunk 4 — agent-initiated request routing (½–1 day) ✅
 
 Track "driving client" per session: whichever subscriber sent the most recent request. Server-initiated requests from hermes-acp (e.g., tool authorization prompts) route to the driving client. If the driving client disconnects mid-request, route to next subscriber or fail-fast.
 
 **DoD:** Tool authorization request reaches the client that initiated the turn, not other subscribers.
 
-### Chunk 5 — concurrent turn serialization (½ day)
+### Chunk 5 — concurrent turn serialization (½ day) ✅
 
 Session has explicit state: `idle` | `in_turn`. New prompt while `in_turn` is **rejected** (v0.5 picks rejection over queueing for simplicity); other subscribers are notified via a synthetic `session/busy` event so their UI can disable the composer.
 
@@ -54,13 +56,13 @@ Session has explicit state: `idle` | `in_turn`. New prompt while `in_turn` is **
 
 **DoD:** Two clients send simultaneous prompts; one succeeds, the other gets a busy notification. All subscribers see the session-busy state.
 
-### Chunk 6 — reconnect grace + lifecycle polish (½ day)
+### Chunk 6 — reconnect grace + lifecycle polish (½ day) ✅
 
 When the last subscriber disconnects, don't kill the subprocess immediately — start a 30s TTL timer. New subscriber within TTL cancels the timer. After TTL, subprocess terminates and session is removed from the registry. Configurable via `--session-ttl-seconds`.
 
 **DoD:** Connect → disconnect → reconnect within 30s → same subprocess (verify by PID). Disconnect → wait 30s → subprocess gone.
 
-### Chunk 7 — tests, docs, migration notes (½–1 day)
+### Chunk 7 — tests, docs, migration notes (½–1 day) ✅
 
 - pytest-asyncio test suite covering the new multiplex behavior (registry, fan-out, ID translation, busy state, TTL).
 - README architecture diagram updated to show multi-subscriber.
