@@ -1,55 +1,64 @@
 """Bidirectional NDJSON relay between a WebSocket and a hermes-acp subprocess.
 
-One subprocess per WebSocket connection. The bridge does not parse JSON-RPC
-bodies; it only ensures one NDJSON line maps to exactly one WebSocket text
-frame and vice versa.
+In v0.5 chunk 1 each session still has at most one subscriber, but the
+subprocess lifecycle is owned by `SessionRegistry` (not by the relay function)
+so chunk 2 can attach additional subscribers without restructuring this file.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
 
 from fastapi import WebSocket, WebSocketDisconnect
 
 from .acp_client import ACPSubprocess
+from .session_registry import (
+    SessionConflict,
+    SessionRegistry,
+    is_valid_session_id,
+)
 
 logger = logging.getLogger(__name__)
 
-
-@dataclass
-class RelayConfig:
-    """Settings for spawning the ACP subprocess per connection."""
-
-    command: str = "hermes-acp"
-    args: tuple[str, ...] = ()
+# Application-specific WS close codes (4000-4999 range is reserved for app use).
+WS_CLOSE_INVALID_SESSION = 4400
+WS_CLOSE_SESSION_IN_USE = 4409
+WS_CLOSE_ACP_SPAWN_FAILED = 1011
 
 
-async def relay(ws: WebSocket, config: RelayConfig) -> None:
-    """Accept the WebSocket and relay until either end closes."""
+async def relay(ws: WebSocket, session_id: str | None, registry: SessionRegistry) -> None:
+    """Accept the WebSocket and relay NDJSON frames until either end closes."""
     await ws.accept()
     client = ws.client.host if ws.client else "?"
-    logger.info("WS connected from %s", client)
 
-    proc = ACPSubprocess(command=config.command, args=list(config.args))
+    if not is_valid_session_id(session_id):
+        logger.info("rejected connection from %s: invalid session id %r", client, session_id)
+        await ws.close(code=WS_CLOSE_INVALID_SESSION, reason="invalid or missing session id")
+        return
+    assert session_id is not None  # narrow for type checkers
+
     try:
-        await proc.start()
+        state = await registry.attach(session_id, ws)
+    except SessionConflict:
+        logger.info("rejected duplicate connection to session %s from %s", session_id, client)
+        await ws.close(code=WS_CLOSE_SESSION_IN_USE, reason=f"session in use: {session_id}")
+        return
     except FileNotFoundError:
-        await ws.close(code=1011, reason=f"command not found: {config.command}")
-        logger.error("Cannot spawn %s — not on PATH", config.command)
+        await ws.close(code=WS_CLOSE_ACP_SPAWN_FAILED, reason="hermes-acp command not found")
         return
     except Exception as exc:
-        await ws.close(code=1011, reason=f"failed to spawn ACP: {exc}")
-        logger.exception("Failed to spawn ACP subprocess")
+        logger.exception("failed to spawn ACP subprocess for session %s", session_id)
+        await ws.close(code=WS_CLOSE_ACP_SPAWN_FAILED, reason=f"failed to spawn ACP: {exc}")
         return
 
-    ws_to_proc = asyncio.create_task(_pump_ws_to_proc(ws, proc), name="ws->proc")
-    proc_to_ws = asyncio.create_task(_pump_proc_to_ws(proc, ws), name="proc->ws")
+    logger.info("ws %s attached to session %s", client, session_id)
+
+    ws_to_proc = asyncio.create_task(_pump_ws_to_proc(ws, state.proc), name="ws->proc")
+    proc_to_ws = asyncio.create_task(_pump_proc_to_ws(state.proc, ws), name="proc->ws")
 
     try:
-        # When either direction ends (WS disconnect or subprocess EOF), tear down.
-        done, pending = await asyncio.wait(
+        _done, pending = await asyncio.wait(
             {ws_to_proc, proc_to_ws}, return_when=asyncio.FIRST_COMPLETED
         )
         for task in pending:
@@ -60,8 +69,8 @@ async def relay(ws: WebSocket, config: RelayConfig) -> None:
             except asyncio.CancelledError:
                 pass
     finally:
-        rc = await proc.stop()
-        logger.info("WS closed for %s; ACP exit=%s", client, rc)
+        await registry.detach(session_id, ws)
+        logger.info("ws %s detached from session %s", client, session_id)
         try:
             await ws.close()
         except RuntimeError:
@@ -73,12 +82,10 @@ async def _pump_ws_to_proc(ws: WebSocket, proc: ACPSubprocess) -> None:
     try:
         while True:
             msg = await ws.receive_text()
-            # Normalise: strip newlines inside the payload (NDJSON requires one line per frame).
-            # The client shouldn't be sending embedded newlines, but be defensive.
             normalised = msg.replace("\n", "").replace("\r", "")
             await proc.send_line(normalised.encode("utf-8"))
     except WebSocketDisconnect:
-        logger.debug("WS disconnected (ws->proc direction)")
+        logger.debug("ws disconnected (ws->proc direction)")
     except Exception:
         logger.exception("ws->proc relay error")
 
@@ -91,6 +98,6 @@ async def _pump_proc_to_ws(proc: ACPSubprocess, ws: WebSocket) -> None:
                 continue
             await ws.send_text(line.decode("utf-8", errors="replace"))
     except WebSocketDisconnect:
-        logger.debug("WS disconnected (proc->ws direction)")
+        logger.debug("ws disconnected (proc->ws direction)")
     except Exception:
         logger.exception("proc->ws relay error")

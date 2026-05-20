@@ -9,8 +9,7 @@ import sys
 
 import uvicorn
 
-from .app import create_app
-from .ws_relay import RelayConfig
+from .app import AppConfig, create_app
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -47,7 +46,7 @@ def main(argv: list[str] | None = None) -> None:
     if not parts:
         print("--hermes-acp-cmd must not be empty", file=sys.stderr)
         sys.exit(2)
-    config = RelayConfig(command=parts[0], args=tuple(parts[1:]))
+    config = AppConfig(acp_command=parts[0], acp_args=tuple(parts[1:]))
     app = create_app(config)
 
     uvicorn.run(

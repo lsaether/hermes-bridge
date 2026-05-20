@@ -8,7 +8,7 @@ Run after starting the bridge:
     hermes-bridge --host 127.0.0.1 --port 8765
 
 Then:
-    python scripts/test_client.py
+    python scripts/test_client.py --session my-session-1
 """
 
 from __future__ import annotations
@@ -61,9 +61,17 @@ async def run(url: str, timeout: float) -> int:
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--url", default="ws://127.0.0.1:8765/acp")
+    p.add_argument(
+        "--session",
+        default="smoketest",
+        help="Session ID to attach to (appended as ?session=<id> if --url has no query string).",
+    )
     p.add_argument("--timeout", type=float, default=5.0)
     args = p.parse_args()
-    sys.exit(asyncio.run(run(args.url, args.timeout)))
+    url = args.url
+    if "?" not in url:
+        url = f"{url}?session={args.session}"
+    sys.exit(asyncio.run(run(url, args.timeout)))
 
 
 if __name__ == "__main__":
