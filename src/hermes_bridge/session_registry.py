@@ -82,6 +82,15 @@ class SessionState:
     # concurrent turn that hermes-acp can't handle.
     active_turn_bridge_id: int | None = None
 
+    # Lifecycle (chunk 6).
+    #   subprocess_dead: set by the dispatcher's finally block when proc.lines()
+    #     ends. Once True, detach skips the TTL grace period — there's no live
+    #     agent to wait for a reconnect.
+    #   ttl_task: scheduled by detach when the last subscriber leaves. Cancelled
+    #     by attach if a subscriber rejoins within the TTL window.
+    subprocess_dead: bool = False
+    ttl_task: asyncio.Task[None] | None = None
+
     async def handle_outbound(self, subscriber: Any, raw: str) -> None:
         """A subscriber sent `raw` to the subprocess. Translate, intercept, or pass through."""
         try:
@@ -244,9 +253,15 @@ class SessionState:
 
 
 class SessionRegistry:
-    def __init__(self, acp_command: str, acp_args: tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        acp_command: str,
+        acp_args: tuple[str, ...],
+        session_ttl_seconds: float = 30.0,
+    ) -> None:
         self._acp_command = acp_command
         self._acp_args = acp_args
+        self._session_ttl = session_ttl_seconds
         self._sessions: dict[str, SessionState] = {}
         self._lock = asyncio.Lock()
 
@@ -265,6 +280,12 @@ class SessionRegistry:
                 logger.info("created session %s (first subscriber)", session_id)
                 return state
 
+            # Cancel any in-flight TTL teardown — a subscriber rejoined.
+            if state.ttl_task is not None and not state.ttl_task.done():
+                state.ttl_task.cancel()
+                state.ttl_task = None
+                logger.info("session %s: reconnect within TTL; subprocess preserved", session_id)
+
             if subscriber not in state.subscribers:
                 state.subscribers.append(subscriber)
                 logger.info(
@@ -280,16 +301,11 @@ class SessionRegistry:
             if state is None:
                 return
             state.subscribers = [s for s in state.subscribers if s is not subscriber]
-            # Drop any pending requests this subscriber had in flight — responses
-            # for them would now have nowhere to route.
             state.pending_requests = {
                 bid: entry
                 for bid, entry in state.pending_requests.items()
                 if entry[0] is not subscriber
             }
-            # If the leaving subscriber was driving, clear it. Future agent-
-            # initiated requests fall back to subscribers[0] until someone else
-            # issues a substantive request.
             if state.driving_subscriber is subscriber:
                 state.driving_subscriber = None
             logger.info(
@@ -298,10 +314,42 @@ class SessionRegistry:
             )
             if state.subscribers:
                 return
+
+            # Last subscriber left. If the subprocess died (crash, EOF) tear
+            # down immediately; there's no live agent worth holding for a
+            # reconnect. Otherwise schedule a TTL grace period.
+            if state.subprocess_dead or self._session_ttl <= 0:
+                self._sessions.pop(session_id, None)
+                state_to_stop = state
+            else:
+                state.ttl_task = asyncio.create_task(
+                    self._ttl_teardown(session_id),
+                    name=f"session-ttl-{session_id}",
+                )
+                logger.info(
+                    "session %s idle; teardown in %.1fs unless a subscriber returns",
+                    session_id, self._session_ttl,
+                )
+
+        if state_to_stop is not None:
+            await _shutdown_session(state_to_stop)
+
+    async def _ttl_teardown(self, session_id: str) -> None:
+        try:
+            await asyncio.sleep(self._session_ttl)
+        except asyncio.CancelledError:
+            return
+
+        state_to_stop: SessionState | None = None
+        async with self._lock:
+            state = self._sessions.get(session_id)
+            if state is None or state.subscribers:
+                return
             self._sessions.pop(session_id, None)
             state_to_stop = state
 
         if state_to_stop is not None:
+            logger.info("session %s: TTL expired; terminating subprocess", session_id)
             await _shutdown_session(state_to_stop)
 
     async def shutdown(self) -> None:
@@ -320,6 +368,13 @@ class SessionRegistry:
 
 
 async def _shutdown_session(state: SessionState) -> None:
+    """Tear down a session: cancel pending TTL, cancel reader, stop subprocess."""
+    if state.ttl_task is not None and not state.ttl_task.done():
+        state.ttl_task.cancel()
+        try:
+            await state.ttl_task
+        except (asyncio.CancelledError, Exception):
+            pass
     if state.reader_task is not None and not state.reader_task.done():
         state.reader_task.cancel()
         try:
@@ -343,6 +398,8 @@ async def _dispatch_subprocess_output(state: SessionState) -> None:
     except Exception:
         logger.exception("dispatcher error for session %s", state.session_id)
     finally:
+        # Mark the subprocess dead so detach skips the TTL grace period.
+        state.subprocess_dead = True
         if state.subscribers:
             logger.info(
                 "subprocess ended for session %s; closing %d subscriber(s)",

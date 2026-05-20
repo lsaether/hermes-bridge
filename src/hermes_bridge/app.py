@@ -21,10 +21,15 @@ class AppConfig:
 
     acp_command: str = "hermes-acp"
     acp_args: tuple[str, ...] = ()
+    session_ttl_seconds: float = 30.0
 
 
 def create_app(config: AppConfig) -> FastAPI:
-    registry = SessionRegistry(acp_command=config.acp_command, acp_args=config.acp_args)
+    registry = SessionRegistry(
+        acp_command=config.acp_command,
+        acp_args=config.acp_args,
+        session_ttl_seconds=config.session_ttl_seconds,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

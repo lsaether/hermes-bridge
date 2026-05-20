@@ -26,6 +26,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "May include extra args, parsed via shlex.",
     )
     p.add_argument(
+        "--session-ttl-seconds",
+        type=float,
+        default=30.0,
+        help="Seconds to keep an idle session's subprocess alive after the last "
+        "subscriber disconnects, so reconnects don't lose state. Set to 0 for "
+        "immediate teardown. (default: 30)",
+    )
+    p.add_argument(
         "--log-level",
         default="info",
         choices=("debug", "info", "warning", "error"),
@@ -46,7 +54,11 @@ def main(argv: list[str] | None = None) -> None:
     if not parts:
         print("--hermes-acp-cmd must not be empty", file=sys.stderr)
         sys.exit(2)
-    config = AppConfig(acp_command=parts[0], acp_args=tuple(parts[1:]))
+    config = AppConfig(
+        acp_command=parts[0],
+        acp_args=tuple(parts[1:]),
+        session_ttl_seconds=args.session_ttl_seconds,
+    )
     app = create_app(config)
 
     uvicorn.run(
