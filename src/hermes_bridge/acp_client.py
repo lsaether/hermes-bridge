@@ -32,6 +32,8 @@ class ACPSubprocess:
         self._args = list(args or [])
         self._env = {**os.environ, **(env or {})}
         self._proc: asyncio.subprocess.Process | None = None
+        # Serialises concurrent send_line calls from multiple subscribers.
+        self._stdin_lock = asyncio.Lock()
 
     async def start(self) -> None:
         if self._proc is not None:
@@ -71,8 +73,9 @@ class ACPSubprocess:
             raise RuntimeError("ACPSubprocess not started")
         if not line.endswith(b"\n"):
             line = line + b"\n"
-        self._proc.stdin.write(line)
-        await self._proc.stdin.drain()
+        async with self._stdin_lock:
+            self._proc.stdin.write(line)
+            await self._proc.stdin.drain()
 
     async def lines(self) -> AsyncIterator[bytes]:
         """Yield each line from the subprocess stdout (without the trailing newline)."""
