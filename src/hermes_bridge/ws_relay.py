@@ -13,8 +13,7 @@ import logging
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from .acp_client import ACPSubprocess
-from .session_registry import SessionRegistry, is_valid_session_id
+from .session_registry import SessionRegistry, SessionState, is_valid_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +47,7 @@ async def relay(ws: WebSocket, session_id: str | None, registry: SessionRegistry
     logger.info("ws %s attached to session %s", client, session_id)
 
     try:
-        await _pump_ws_to_proc(ws, state.proc)
+        await _pump_ws_to_proc(ws, state)
     finally:
         await registry.detach(session_id, ws)
         logger.info("ws %s detached from session %s", client, session_id)
@@ -58,13 +57,17 @@ async def relay(ws: WebSocket, session_id: str | None, registry: SessionRegistry
             pass  # already closed (e.g. subprocess EOF closed it from the dispatcher)
 
 
-async def _pump_ws_to_proc(ws: WebSocket, proc: ACPSubprocess) -> None:
-    """Read text frames from the WebSocket and write each as one NDJSON line to subprocess stdin."""
+async def _pump_ws_to_proc(ws: WebSocket, state: SessionState) -> None:
+    """Read text frames from the WebSocket and pass each to the session's translator.
+
+    Translation (id rewriting, initialize interception) is owned by SessionState
+    so all per-session JSON-RPC state lives in one place.
+    """
     try:
         while True:
             msg = await ws.receive_text()
             normalised = msg.replace("\n", "").replace("\r", "")
-            await proc.send_line(normalised.encode("utf-8"))
+            await state.handle_outbound(ws, normalised)
     except WebSocketDisconnect:
         logger.debug("ws disconnected (ws->proc direction)")
     except Exception:
