@@ -66,6 +66,13 @@ class SessionState:
     pending_initialize_bridge_id: int | None = None
     cached_initialize_result: Any | None = None
 
+    # Driving subscriber (chunk 4): whoever most recently issued a substantive
+    # request (anything except initialize). Agent-initiated requests from the
+    # subprocess (tool authorization, terminal commands, ...) route to this
+    # subscriber so the right user is asked. Falls back to subscribers[0] if
+    # the driving subscriber has disconnected.
+    driving_subscriber: Any | None = None
+
     async def handle_outbound(self, subscriber: Any, raw: str) -> None:
         """A subscriber sent `raw` to the subprocess. Translate, intercept, or pass through."""
         try:
@@ -114,6 +121,9 @@ class SessionState:
             self.pending_requests[bridge_id] = (subscriber, msg_id)
             if method == "initialize" and self.cached_initialize_result is None:
                 self.pending_initialize_bridge_id = bridge_id
+            else:
+                # Substantive (non-initialize) request — this subscriber is now driving.
+                self.driving_subscriber = subscriber
 
             parsed["id"] = bridge_id
             await self.proc.send_line(json.dumps(parsed).encode("utf-8"))
@@ -143,10 +153,18 @@ class SessionState:
             await _broadcast(self, raw)
             return
 
-        # Agent-initiated request — chunk 3 sends to subscribers[0] (placeholder).
+        # Agent-initiated request — route to the driving subscriber.
         if msg_id is not None and method:
-            if self.subscribers:
-                await _send_one(self.subscribers[0], raw)
+            target = self.driving_subscriber
+            if target is None or target not in self.subscribers:
+                target = self.subscribers[0] if self.subscribers else None
+            if target is None:
+                logger.warning(
+                    "session %s: agent-initiated request with no subscribers; dropped",
+                    self.session_id,
+                )
+                return
+            await _send_one(target, raw)
             return
 
         # Response to a bridge-forwarded request.
@@ -225,6 +243,11 @@ class SessionRegistry:
                 for bid, entry in state.pending_requests.items()
                 if entry[0] is not subscriber
             }
+            # If the leaving subscriber was driving, clear it. Future agent-
+            # initiated requests fall back to subscribers[0] until someone else
+            # issues a substantive request.
+            if state.driving_subscriber is subscriber:
+                state.driving_subscriber = None
             logger.info(
                 "removed subscriber from session %s (remaining=%d)",
                 session_id, len(state.subscribers),
