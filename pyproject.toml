@@ -13,6 +13,7 @@ authors = [{ name = "Logan Saether" }]
 dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
+    "websockets>=12",
 ]
 
 [project.optional-dependencies]
@@ -29,6 +30,7 @@ testpaths = ["tests"]
 
 [project.scripts]
 hermes-bridge = "hermes_bridge.__main__:main"
+ws-acp-shim = "hermes_bridge.ws_acp_shim:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/hermes_bridge"]
