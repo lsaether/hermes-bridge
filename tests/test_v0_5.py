@@ -235,6 +235,72 @@ async def test_session_resolution_resets_on_new_bridge_session():
         )
 
 
+# ---------- v0.5.2: user-message echo ----------
+
+
+async def test_user_message_echoed_to_peers_only():
+    """When a subscriber sends session/prompt, the bridge fans out a
+    session/update / user_message_chunk to every other subscriber (so they
+    can render what the originator typed). The originator itself does NOT
+    receive that echo — its UI shows the message locally."""
+    with run_bridge() as b:
+        a = await websockets.connect(f"{b['ws_url']}?session=echo")
+        c = await websockets.connect(f"{b['ws_url']}?session=echo")
+        await asyncio.sleep(0.2)
+        try:
+            # A creates the ACP session (the cache populates).
+            await a.send(json.dumps({
+                "jsonrpc": "2.0", "id": 1, "method": "session/new",
+                "params": {"cwd": "/", "mcpServers": []},
+            }))
+            a_new = await _recv_until(a, lambda m: m.get("id") == 1)
+            sid = a_new["result"]["sessionId"]
+            # C joins (cache replay).
+            await c.send(json.dumps({
+                "jsonrpc": "2.0", "id": 1, "method": "session/new",
+                "params": {"cwd": "/", "mcpServers": []},
+            }))
+            await _recv_until(c, lambda m: m.get("id") == 1)
+            await _drain(a)
+            await _drain(c)
+
+            # A sends a prompt.
+            await a.send(json.dumps({
+                "jsonrpc": "2.0", "id": 2, "method": "session/prompt",
+                "params": {
+                    "sessionId": sid,
+                    "prompt": [{"type": "text", "text": "hi from A"}],
+                },
+            }))
+
+            # C should see the echo as a session/update user_message_chunk.
+            c_echo = await _recv_until(
+                c,
+                lambda m: (
+                    m.get("method") == "session/update"
+                    and m.get("params", {}).get("update", {}).get("sessionUpdate") == "user_message_chunk"
+                    and m.get("params", {}).get("update", {}).get("content", {}).get("text") == "hi from A"
+                ),
+                timeout=2.0,
+            )
+            assert c_echo is not None, "peer C did not receive the user_message_chunk echo"
+            assert c_echo["params"]["sessionId"] == sid
+
+            # A must NOT see its own echo (it renders locally).
+            a_echo = await _recv_until(
+                a,
+                lambda m: (
+                    m.get("method") == "session/update"
+                    and m.get("params", {}).get("update", {}).get("sessionUpdate") == "user_message_chunk"
+                ),
+                timeout=0.5,
+            )
+            assert a_echo is None, "originator A unexpectedly received its own echo"
+        finally:
+            await a.close()
+            await c.close()
+
+
 # ---------- chunk 4: agent-initiated request routing ----------
 
 

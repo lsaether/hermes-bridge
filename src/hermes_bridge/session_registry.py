@@ -197,6 +197,12 @@ class SessionState:
                 self.driving_subscriber = subscriber
             if method == "session/prompt":
                 self.active_turn_bridge_id = bridge_id
+                # Echo the user's prompt to every OTHER subscriber as a
+                # session/update / user_message_chunk so multi-client UIs
+                # show what the originator typed. ACP 1:1 assumes the local
+                # client renders its own input, so the agent never echoes;
+                # in multi-subscriber land the bridge has to synthesize this.
+                await self._broadcast_user_message_to_peers(subscriber, parsed.get("params"))
 
             parsed["id"] = bridge_id
             await self.proc.send_line(json.dumps(parsed).encode("utf-8"))
@@ -204,6 +210,40 @@ class SessionState:
 
         # Fallthrough: weird shape (no id, no method). Pass through.
         await self.proc.send_line(raw.encode("utf-8"))
+
+    async def _broadcast_user_message_to_peers(
+        self, originator: Any, prompt_params: Any
+    ) -> None:
+        """Emit one session/update user_message_chunk per content block in the
+        prompt, to every subscriber except the originator. The originator
+        already renders its own input locally."""
+        if not isinstance(prompt_params, dict):
+            return
+        session_id = prompt_params.get("sessionId")
+        blocks = prompt_params.get("prompt")
+        if not session_id or not isinstance(blocks, list):
+            return
+
+        peers = [ws for ws in self.subscribers if ws is not originator]
+        if not peers:
+            return
+
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            notif = json.dumps({
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {
+                    "sessionId": session_id,
+                    "update": {
+                        "sessionUpdate": "user_message_chunk",
+                        "content": block,
+                    },
+                },
+            })
+            for ws in peers:
+                await _send_one(ws, notif)
 
     async def handle_inbound(self, raw: str) -> None:
         """The subprocess emitted `raw`. Classify and route to subscriber(s)."""

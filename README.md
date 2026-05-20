@@ -31,6 +31,8 @@ Each unique `?session=<id>` value maps to one `hermes-acp` subprocess. Multiple 
 
 **Session resolution:** the first subscriber's `initialize` and `session/new` requests are forwarded normally; their responses are cached and replayed transparently to every subsequent subscriber on the same bridge `?session=`. So all subscribers operate on the **same ACP session** without coordinating — desktop and phone clients both attach to the same live conversation just by using the same `?session=` value.
 
+**User-message echo:** ACP is designed for 1:1 client:agent — the agent never echoes user prompts because the local client already renders its own input. In multi-subscriber mode the bridge synthesizes a `session/update` / `user_message_chunk` notification for every other subscriber whenever someone sends a `session/prompt`, so peers see what was typed. The originating subscriber does NOT receive the echo (it renders its prompt locally).
+
 ## Install
 
 ```bash
@@ -101,4 +103,4 @@ If you previously connected to `ws://host:port/acp`, change it to `ws://host:por
 
 ## Status
 
-v0.5.1. Multi-subscriber sessions with id translation, initialize + session/new caching (session resolution), agent-request routing to the driving client, turn serialization, and TTL reconnect grace. No auth. See `ROADMAP.md` for v1.0 ideas (replay buffer, backpressure, crash recovery, session discovery, persistent always-on subprocesses).
+v0.5.2. Multi-subscriber sessions with id translation, initialize + session/new caching (session resolution), bridge-synthesized user-message echo across peers, agent-request routing to the driving client, turn serialization, and TTL reconnect grace. No auth. See `ROADMAP.md` for v1.0 ideas (replay buffer, backpressure, crash recovery, session discovery, persistent always-on subprocesses).

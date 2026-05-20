@@ -68,6 +68,10 @@ When the last subscriber disconnects, don't kill the subprocess immediately — 
 
 Discovered post-v0.5 while wiring a real second client (Toad via `websocat`): subscribers each called `session/new` and got *different* ACP sessionIds, so they shared the subprocess but not the conversation. Fix: cache the first subscriber's `session/new` result and replay it for subsequent subscribers, same pattern as `initialize` caching. Cache wipes when the bridge session tears down. Two new tests verify same-bridge-session sharing and cross-bridge-session isolation.
 
+### v0.5.2 — user-message echo (¼ day) ✅
+
+Second post-v0.5 discovery during the same Toad+acp-tui session-sharing test: agent responses streamed to both clients, but user prompts didn't — only the originating client showed its own input. Root cause: ACP assumes 1:1, so agents never echo user prompts (the local client renders them). Bridge fix: on forwarding a `session/prompt`, synthesize an ACP-compliant `session/update` with `sessionUpdate: "user_message_chunk"` for every OTHER subscriber. Originator continues to render its prompt locally and is excluded from the echo. One new test verifies fan-out to peers and no leak to the originator.
+
 - pytest-asyncio test suite covering the new multiplex behavior (registry, fan-out, ID translation, busy state, TTL).
 - README architecture diagram updated to show multi-subscriber.
 - Migration note: clients now **must** specify `?session=<id>`. The old "connect-and-go" implicit-session behavior is removed.
