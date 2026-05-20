@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hermes-bridge"
-version = "0.1.0"
+version = "0.5.2"
 description = "WebSocket bridge to a hermes-acp stdio subprocess. Lets mobile/web clients attach to a local Hermes agent over the network."
 readme = "README.md"
 license = { text = "MIT" }

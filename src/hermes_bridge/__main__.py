@@ -9,6 +9,7 @@ import sys
 
 import uvicorn
 
+from . import __version__
 from .app import AppConfig, create_app
 
 
@@ -60,6 +61,15 @@ def main(argv: list[str] | None = None) -> None:
         session_ttl_seconds=args.session_ttl_seconds,
     )
     app = create_app(config)
+
+    logger = logging.getLogger("hermes_bridge")
+    logger.info("hermes-bridge %s starting", __version__)
+    logger.info("listening on %s:%d (ws endpoint: /acp?session=<id>)", args.host, args.port)
+    logger.info("acp command: %s", args.hermes_acp_cmd)
+    if args.session_ttl_seconds <= 0:
+        logger.info("session ttl: 0s (immediate teardown on last disconnect)")
+    else:
+        logger.info("session ttl: %.0fs", args.session_ttl_seconds)
 
     uvicorn.run(
         app,
