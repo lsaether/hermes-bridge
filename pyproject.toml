@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hermes-bridge"
+version = "0.1.0"
+description = "WebSocket bridge to a hermes-acp stdio subprocess. Lets mobile/web clients attach to a local Hermes agent over the network."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "Logan Saether" }]
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+    "websockets>=12",
+]
+
+[project.scripts]
+hermes-bridge = "hermes_bridge.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hermes_bridge"]
