@@ -66,6 +66,15 @@ class SessionState:
     pending_initialize_bridge_id: int | None = None
     cached_initialize_result: Any | None = None
 
+    # Session resolution (v0.5.1). Same pattern as initialize caching but for
+    # `session/new`: the first subscriber's session/new is forwarded normally;
+    # the resulting sessionId is cached and replayed for every later subscriber
+    # so all clients on the same bridge session operate on the SAME ACP session.
+    # Wiped when the bridge session tears down. Clients that want a fresh ACP
+    # conversation use a different bridge `?session=` id.
+    pending_session_new_bridge_id: int | None = None
+    cached_session_new_result: Any | None = None
+
     # Driving subscriber (chunk 4): whoever most recently issued a substantive
     # request (anything except initialize). Agent-initiated requests from the
     # subprocess (tool authorization, terminal commands, ...) route to this
@@ -133,6 +142,21 @@ class SessionState:
                 await _send_one(subscriber, json.dumps(response))
                 return
 
+            # Session resolution: serve the cached session/new result so every
+            # subscriber on this bridge session shares one ACP sessionId.
+            if method == "session/new" and self.cached_session_new_result is not None:
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": self.cached_session_new_result,
+                }
+                logger.debug(
+                    "intercepted session/new for session %s; replayed cached sessionId",
+                    self.session_id,
+                )
+                await _send_one(subscriber, json.dumps(response))
+                return
+
             # Turn serialization: reject session/prompt while another turn is active.
             if method == "session/prompt" and self.active_turn_bridge_id is not None:
                 logger.info(
@@ -165,6 +189,9 @@ class SessionState:
             self.pending_requests[bridge_id] = (subscriber, msg_id)
             if method == "initialize" and self.cached_initialize_result is None:
                 self.pending_initialize_bridge_id = bridge_id
+            elif method == "session/new" and self.cached_session_new_result is None:
+                self.pending_session_new_bridge_id = bridge_id
+                self.driving_subscriber = subscriber
             else:
                 # Substantive (non-initialize) request — this subscriber is now driving.
                 self.driving_subscriber = subscriber
@@ -236,6 +263,25 @@ class SessionState:
                     self.session_id,
                 )
             self.pending_initialize_bridge_id = None  # initialize handshake done either way
+
+            # If this was the initial session/new, cache its result so future
+            # subscribers get bound to the same ACP sessionId.
+            if (
+                msg_id == self.pending_session_new_bridge_id
+                and self.cached_session_new_result is None
+                and "result" in parsed
+            ):
+                self.cached_session_new_result = parsed["result"]
+                acp_session_id = (
+                    parsed["result"].get("sessionId")
+                    if isinstance(parsed["result"], dict)
+                    else None
+                )
+                logger.info(
+                    "session resolution: cached ACP sessionId=%s for bridge session %s",
+                    acp_session_id, self.session_id,
+                )
+            self.pending_session_new_bridge_id = None
 
             # If this response completes the active turn, clear the busy state.
             if msg_id == self.active_turn_bridge_id:

@@ -29,6 +29,8 @@ WebSocket bridge to a [hermes-agent](https://github.com/NousResearch/hermes-agen
 
 Each unique `?session=<id>` value maps to one `hermes-acp` subprocess. Multiple WebSocket subscribers per session are supported: notifications (token streams, tool events) fan out to every subscriber; requests/responses route per-subscriber via bridge-side id translation; agent-initiated requests (tool authorization, terminal commands) go to whichever subscriber most recently issued a client request.
 
+**Session resolution:** the first subscriber's `initialize` and `session/new` requests are forwarded normally; their responses are cached and replayed transparently to every subsequent subscriber on the same bridge `?session=`. So all subscribers operate on the **same ACP session** without coordinating — desktop and phone clients both attach to the same live conversation just by using the same `?session=` value.
+
 ## Install
 
 ```bash
@@ -99,4 +101,4 @@ If you previously connected to `ws://host:port/acp`, change it to `ws://host:por
 
 ## Status
 
-v0.5. Multi-subscriber sessions with id translation, initialize caching, agent-request routing to the driving client, turn serialization, and TTL reconnect grace. No auth. See `ROADMAP.md` for v1.0 ideas (replay buffer, backpressure, crash recovery, session discovery, persistent always-on subprocesses).
+v0.5.1. Multi-subscriber sessions with id translation, initialize + session/new caching (session resolution), agent-request routing to the driving client, turn serialization, and TTL reconnect grace. No auth. See `ROADMAP.md` for v1.0 ideas (replay buffer, backpressure, crash recovery, session discovery, persistent always-on subprocesses).

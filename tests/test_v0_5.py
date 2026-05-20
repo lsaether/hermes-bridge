@@ -181,6 +181,60 @@ async def test_chunk3_initialize_replay_does_not_leak_to_other_subscribers():
             await c.close()
 
 
+# ---------- v0.5.1: session resolution ----------
+
+
+async def test_session_resolution_shares_sessionid_across_subscribers():
+    """First subscriber's session/new is forwarded; second subscriber's is
+    intercepted and replayed with the same sessionId. Both clients now
+    operate on the same ACP session."""
+    with run_bridge() as b:
+        a = await websockets.connect(f"{b['ws_url']}?session=shared")
+        c = await websockets.connect(f"{b['ws_url']}?session=shared")
+        await asyncio.sleep(0.2)
+        try:
+            await a.send(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "session/new", "params": {"cwd": "/", "mcpServers": []}}))
+            a_resp = await _recv_until(a, lambda m: m.get("id") == 1)
+            assert a_resp is not None
+            a_sid = a_resp["result"]["sessionId"]
+
+            await c.send(json.dumps({"jsonrpc": "2.0", "id": 2, "method": "session/new", "params": {"cwd": "/", "mcpServers": []}}))
+            c_resp = await _recv_until(c, lambda m: m.get("id") == 2)
+            assert c_resp is not None
+            c_sid = c_resp["result"]["sessionId"]
+
+            assert a_sid == c_sid, (
+                f"session resolution failed: a got {a_sid}, c got {c_sid}; "
+                "expected the bridge to replay the cached sessionId"
+            )
+        finally:
+            await a.close()
+            await c.close()
+
+
+async def test_session_resolution_resets_on_new_bridge_session():
+    """A fresh bridge `?session=` value gets a brand new ACP sessionId."""
+    with run_bridge() as b:
+        # First bridge session.
+        a = await websockets.connect(f"{b['ws_url']}?session=first")
+        await a.send(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "session/new", "params": {"cwd": "/", "mcpServers": []}}))
+        a_resp = await _recv_until(a, lambda m: m.get("id") == 1)
+        first_sid = a_resp["result"]["sessionId"]
+        await a.close()
+        await asyncio.sleep(0.3)
+
+        # Different bridge session.
+        c = await websockets.connect(f"{b['ws_url']}?session=second")
+        await c.send(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "session/new", "params": {"cwd": "/", "mcpServers": []}}))
+        c_resp = await _recv_until(c, lambda m: m.get("id") == 1)
+        second_sid = c_resp["result"]["sessionId"]
+        await c.close()
+
+        assert first_sid != second_sid, (
+            f"different bridge sessions must produce different ACP sessionIds; got {first_sid} twice"
+        )
+
+
 # ---------- chunk 4: agent-initiated request routing ----------
 
 

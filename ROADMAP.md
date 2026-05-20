@@ -64,6 +64,10 @@ When the last subscriber disconnects, don't kill the subprocess immediately — 
 
 ### Chunk 7 — tests, docs, migration notes (½–1 day) ✅
 
+### v0.5.1 — session resolution (¼ day) ✅
+
+Discovered post-v0.5 while wiring a real second client (Toad via `websocat`): subscribers each called `session/new` and got *different* ACP sessionIds, so they shared the subprocess but not the conversation. Fix: cache the first subscriber's `session/new` result and replay it for subsequent subscribers, same pattern as `initialize` caching. Cache wipes when the bridge session tears down. Two new tests verify same-bridge-session sharing and cross-bridge-session isolation.
+
 - pytest-asyncio test suite covering the new multiplex behavior (registry, fan-out, ID translation, busy state, TTL).
 - README architecture diagram updated to show multi-subscriber.
 - Migration note: clients now **must** specify `?session=<id>`. The old "connect-and-go" implicit-session behavior is removed.

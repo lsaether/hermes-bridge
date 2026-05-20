@@ -1,8 +1,11 @@
-"""Tiny fake ACP subprocess for chunk 2-5 testing.
+"""Tiny fake ACP subprocess for chunk 2-5 + v0.5.1 testing.
 
 For each client message we receive, we emit:
   1) A session/update notification.
   2) If the message is a request (had id+method):
+       - For "session/new": return a fresh UUID sessionId. The bridge's
+         v0.5.1 session-resolution feature should ensure only the first
+         subscriber's session/new reaches us per bridge session.
        - For "session/prompt": delay 1.5s before sending the response so the
          test can race a second prompt against it. No agent-initiated request.
        - For everything else: immediate response + an agent-initiated
@@ -12,6 +15,7 @@ For each client message we receive, we emit:
 import json
 import sys
 import time
+import uuid
 
 AGENT_ID_BASE = 1000
 PROMPT_DELAY_S = 1.5
@@ -42,6 +46,19 @@ def main() -> None:
             continue
 
         method = msg.get("method")
+
+        if method == "session/new":
+            print(
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": msg["id"],
+                        "result": {"sessionId": str(uuid.uuid4())},
+                    }
+                ),
+                flush=True,
+            )
+            continue
 
         if method == "session/prompt":
             time.sleep(PROMPT_DELAY_S)
